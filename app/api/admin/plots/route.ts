@@ -11,6 +11,8 @@ type PlotPayload = {
   type?: string;
   description?: string;
   image_url?: string;
+  lat?: number | null;
+  lng?: number | null;
 };
 
 function getAdminEmails() {
@@ -29,6 +31,8 @@ function sanitizePlot(input: PlotPayload) {
   const type = String(input.type ?? "residential").trim().toLowerCase();
   const description = input.description ? String(input.description).trim() : null;
   const imageUrl = input.image_url ? String(input.image_url).trim() : null;
+  const lat = input.lat === undefined ? null : Number(input.lat);
+  const lng = input.lng === undefined ? null : Number(input.lng);
 
   if (!title || !location || !Number.isFinite(price) || !Number.isFinite(area)) {
     return null;
@@ -43,7 +47,39 @@ function sanitizePlot(input: PlotPayload) {
     type,
     description,
     image_url: imageUrl,
+    lat: Number.isFinite(lat) ? lat : null,
+    lng: Number.isFinite(lng) ? lng : null,
   };
+}
+
+export async function GET() {
+  const supabase = createSupabaseServerAuthClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user?.email) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
+  const adminEmails = getAdminEmails();
+  if (!adminEmails.includes(user.email.toLowerCase())) {
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  }
+
+  const adminClient = createSupabaseAdminClient();
+  const { data, error } = await adminClient
+    .from("plots")
+    .select(
+      "id, title, location, price_usd, area_m2, status, type, description, image_url, lat, lng"
+    )
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ plots: data ?? [] });
 }
 
 export async function POST(request: Request) {
@@ -87,4 +123,94 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({ count: data?.length ?? cleaned.length });
+}
+
+export async function PATCH(request: Request) {
+  const supabase = createSupabaseServerAuthClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user?.email) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
+  const adminEmails = getAdminEmails();
+  if (!adminEmails.includes(user.email.toLowerCase())) {
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  }
+
+  let payload: { id?: string; updates?: Partial<PlotPayload> };
+  try {
+    payload = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+
+  if (!payload.id) {
+    return NextResponse.json({ error: "Missing plot id." }, { status: 400 });
+  }
+
+  const updates = payload.updates ?? {};
+  const sanitized = sanitizePlot({
+    title: String(updates.title ?? ""),
+    location: String(updates.location ?? ""),
+    price_usd: Number(updates.price_usd ?? 0),
+    area_m2: Number(updates.area_m2 ?? 0),
+    status: updates.status ?? "available",
+    type: updates.type ?? "residential",
+    description: updates.description ?? null,
+    image_url: updates.image_url ?? null,
+    lat: updates.lat ?? null,
+    lng: updates.lng ?? null,
+  });
+
+  if (!sanitized) {
+    return NextResponse.json({ error: "Invalid updates." }, { status: 400 });
+  }
+
+  const adminClient = createSupabaseAdminClient();
+  const { error } = await adminClient.from("plots").update(sanitized).eq("id", payload.id);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ success: true });
+}
+
+export async function DELETE(request: Request) {
+  const supabase = createSupabaseServerAuthClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user?.email) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
+  const adminEmails = getAdminEmails();
+  if (!adminEmails.includes(user.email.toLowerCase())) {
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  }
+
+  let payload: { id?: string };
+  try {
+    payload = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+
+  if (!payload.id) {
+    return NextResponse.json({ error: "Missing plot id." }, { status: 400 });
+  }
+
+  const adminClient = createSupabaseAdminClient();
+  const { error } = await adminClient.from("plots").delete().eq("id", payload.id);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ success: true });
 }

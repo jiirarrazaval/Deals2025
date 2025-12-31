@@ -1,3 +1,5 @@
+@import "leaflet/dist/leaflet.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -17,5 +19,5 @@ a {
 
 body {
   margin: 0;
-  background: #020617;
+  background: #f8fafc;
 }
